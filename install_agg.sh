@@ -1,4 +1,5 @@
 #set -x
+#ver 1.2
 do_ubuntu_install() 
 {
     package=${1}
@@ -38,6 +39,7 @@ echo -e "Installing the Core Nagios Product... Be Patient Please."
     echo 'y' | apt-get install libapache2-mod-php5
     echo 'y' | apt-get install build-essential
     echo 'y' | apt-get install libgd2-xpm-dev
+    echo 'y' | apt-get install apache2-utils
     echo ""
     #echo -e "\nUse of nagios requires a nagios user.\n"
     echo "Adding user nagios"
@@ -58,7 +60,7 @@ echo -e "Installing the Core Nagios Product... Be Patient Please."
     echo "Issue Cmd: wget http://prdownloads.sourceforge.net/sourceforge/nagios/nagios-4.2.4.tar.gz"
     wget http://prdownloads.sourceforge.net/sourceforge/nagios/nagios-4.2.4.tar.gz
     tar xzf nagios-4.2.4.tar.gz
-    cd nagios
+    cd nagios-4.2.4
     ./configure --with-command-group=nagcmd
     echo "Got Nagios and ready to compile... One moment please"
     echo "For Build details, please check /tmp/nagios_build.log"
@@ -87,20 +89,20 @@ echo -e "Installing the Core Nagios Product... Be Patient Please."
     cd $homedir
     ln -s /etc/init.d/nagios /etc/rcS.d/S99nagios
     chmod 777 /usr/local/nagios/*
-    mkdir /usr/local/nagios/var/spool
+    mkdir -p /usr/local/nagios/var/spool
     chown nagios:nagios /usr/local/nagios/var/spool
-    mkdir /usr/local/nagios/var/spool/checkresults
+    mkdir -p /usr/local/nagios/var/spool/checkresults
     chown nagios:nagios /usr/local/nagios/var/spool/checkresults
     chown nagios:nagios /usr/local/nagios/var
 #    cp /usr/local/nagios/etc/nagios.cfg /smg/bk
 
     cp commands.cfg hostgroups.cfg hosts.cfg host_template.cfg localhost.cfg services.cfg services_template.cfg stateless_services.cfg  /usr/local/nagios/etc/objects/
 
-    if [ "x${1}x" != "xvanillax" ]; then
-        cp nagios.cfg /usr/local/nagios/etc/
-    else 
-        cp localhost.vanilla.cfg /usr/local/nagios/etc/objects/localhost.cfg
-    fi
+#    if [ "x${1}x" != "xvanillax" ]; then
+#        cp nagios.cfg /usr/local/nagios/etc/
+#    else 
+#        cp localhost.vanilla.cfg /usr/local/nagios/etc/objects/localhost.cfg
+#    fi
 
     chown nagios.nagios /usr/local/nagios/etc/objects/*.cfg
     chown nagios.nagios /usr/local/nagios/etc/nagios.cfg
@@ -114,73 +116,74 @@ read junk
 clear
 echo ""
 echo ""
-wget http://prdownloads.sourceforge.net/sourceforge/nagios/nsca-2.7.2.tar.gz
+#wget http://prdownloads.sourceforge.net/sourceforge/nagios/nsca-2.7.2.tar.gz
 
-echo "Copying modified nsca.c to 2.7.2 source base and REBUILDING nsca..."
+#echo "Copying modified nsca.c to 2.7.2 source base and REBUILDING nsca..."
 
-tar -zxvf nsca-2.7.2.tar.gz
-cd nsca-2.7.2/
-./configure
-make all
-#cp src/nsca.c /smg/bk
-cp ${homedir}/nsca.c src
-make nsca
-cp src/nsca /usr/local/nagios/bin/
-# OKt  Lets start moving some files around. Issue the 3 commands:
-cp sample-config/nsca.cfg /usr/local/nagios/etc/
+#tar -zxvf nsca-2.7.2.tar.gz
+#cd nsca-2.7.2/
+#./configure
+#make all
+##cp src/nsca.c /smg/bk
+#cp ${homedir}/nsca.c src
+#make nsca
+#cp src/nsca /usr/local/nagios/bin/
+## OKt  Lets start moving some files around. Issue the 3 commands:
+#cp sample-config/nsca.cfg /usr/local/nagios/etc/
 chown nagios.nagios /usr/local/nagios/etc/nsca.cfg
-chmod g+r /usr/local/nagios/etc/nsca.cfg
+#chmod g+r /usr/local/nagios/etc/nsca.cfg
 cd $homedir
 
 # Now try to fire that baby up. Issue:
-/usr/local/nagios/bin/nsca -c /usr/local/nagios/etc/nsca.cfg
+#/usr/local/nagios/bin/nsca -c /usr/local/nagios/etc/nsca.cfg
 
-if [ $? != 0 ]; then
-    echo -e "\n[31mNSCA ERROR: Check nsca Build results[0m" 
-else
-    echo -e "\n[32mnsca was successfully started.[0m"
-fi
+#if [ $? != 0 ]; then
+#    echo -e "\n[31mNSCA ERROR: Check nsca Build results[0m" 
+#else
+#    echo -e "\n[32mnsca was successfully started.[0m"
+#fi
 
 cp ${homedir}/main.php /usr/local/nagios/share/
 
 echo "Nagios has been successfully setup."
 #echo -e "\nHit return to continue\c"
 #read junk
-if [ "x${1}" = "xnagios" ]; then 
-   echo "Passive Nagios Setup Completed Successfully."
-   exit 3
-fi
-if [ "x${1}" = "xvanilla" ]; then 
-   echo "Vanilla Nagios Setup Completed Successfully."
-   exit 3
-fi
+#if [ "x${1}" = "xnagios" ]; then 
+#   echo "Nagios Setup Completed Successfully."
+#   exit 3
+#fi
+#if [ "x${1}" = "xvanilla" ]; then 
+#   echo "Vanilla Nagios Setup Completed Successfully."
+#   exit 3
+#fi
 
 cd $homedir
 echo ""
-echo "Building SMG Aggregator biniaries."
+echo "Building Aggregator biniaries."
 echo ""
 make clean
 make all
-mkdir /smg 2>&1 > /dev/null
-mkdir /smg/bin 2>&1 > /dev/null
-cp nsca_monitor.sh nagios_monitor.sh nsync_monitor.sh restart_nsync_due_to_log_rotation.sh process_resub_buf /smg/bin
+#mkdir /smg 2>&1 > /dev/null
+mkdir -p /smg/bin 2>&1 > /dev/null
+cp nsca_monitor.sh nagios_monitor.sh nagios_create_monitor.sh restart_nagios_create_due_to_log_rotation.sh /smg/bin
+cp  nagios_create ntail nagios_search viz event_queue calc_uptime /smg/bin
 if [ $? -ne 0 ]; then
     echo ""
-    echo "SMG Aggregator /smg/bin biniaries FAILED to build."
+    echo "Aggregator /smg/bin biniaries FAILED to build."
     echo ""
 else
     echo "" 
-    echo "SMG Aggregator /smg/bin biniaries built successfully."
+    echo "Aggregator /smg/bin biniaries built successfully."
     echo ""
 fi
-cp rm_host restart_nsync.sh start_new_nsync.sh start_nsync.sh stop_nsync.sh add_mssql_host nsync ntail gn viz calc_uptime /smg/bin
+cp restart_nagios_create start_new_nagios_create start_nagios_create stop_nagios_create add_mssql_host ntail viz /smg/bin
 if [ $? -ne 0 ]; then
     echo ""
-    echo "SMG Aggregator admin biniaries FAILED to build."
+    echo "Aggregator admin biniaries FAILED to build."
     echo ""
 else
     echo ""
-    echo "SMG Aggregator admin biniaries built successfully."
+    echo "Aggregator admin biniaries built successfully."
     echo ""
 fi
 echo ""
@@ -217,8 +220,8 @@ echo "* * * * * if [ -x /usr/local/nagios ]; then /smg/bin/nagios_monitor.sh $gr
 echo "* * * * * if [ -x /usr/local/nagios ]; then /smg/bin/nsync_monitor.sh $group_pager_number ; fi > /dev/null 2>&1" >> $ROOT_CRON_FILE
 
 
-echo nohup /usr/local/bin/nsync /usr/local/nagios/var/nagios.log &
-nohup /usr/local/bin/nsync /usr/local/nagios/var/nagios.log &
+echo nohup /smg/bin/nagios_create /usr/local/nagios/var/nagios.log &
+nohup /smg/bin/nagios_create /usr/local/nagios/var/nagios.log &
 echo ""
 echo ""
 echo "This completes the Aggregator Installation.  Hit any key to continue"
