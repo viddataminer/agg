@@ -1,0 +1,239 @@
+Install ubuntu server 10.04
+#chose no automatic updates option
+#chose only the OpenSSH server to be installed
+#did ps -ef | grep sshd and it was loaded
+#ssh'd from a different pc and it worked
+homedir=`pwd`
+cat /proc/version | grep Ubuntu
+if [ $? -eq 0 ]; then
+   ROOT_CRON_FILE="/var/spool/cron/crontabs/root";
+else
+   ROOT_CRON_FILE="/var/spool/cron/root";
+fi
+
+if [ "${me}" != "root" ]; then
+    echo "^[[31mPlease run this script as root.^[[0m"
+    exit 0
+fi
+
+if [ ! -d /smg ]; then mkdir /smg 2>&1 > /dev/null; fi
+if [ ! -d /smg/bin ]; then mkdir /smg/bin 2>&1 > /dev/null; fi
+if [ ! -d /smg/log ]; then mkdir /smg/log 2>&1 > /dev/null; fi
+if [ ! -d /smg/cfg ]; then mkdir /smg/cfg 2>&1 > /dev/null; fi
+if [ ! -d /smg/cfg/ping ]; then mkdir /smg/cfg/ping 2>&1 > /dev/null; fi
+if [ ! -d /smg/cfg/nmap ]; then mkdir /smg/cfg/nmap 2>&1 > /dev/null; fi
+if [ ! -d /smg/les ]; then mkdir /smg/les 2>&1 > /dev/null; fi
+if [ ! -d /smg/les/ping ]; then mkdir /smg/les/ping 2>&1 > /dev/null; fi
+if [ ! -d /smg/src ]; then mkdir /smg/src 2>&1 > /dev/null; fi
+if [ ! -d /smg/out ]; then mkdir /smg/out 2>&1 > /dev/null; fi
+if [ ! -d /smg/out/trending ]; then mkdir /smg/out/trending 2>&1 > /dev/null; fi
+if [ ! -d /smg/out/ping ]; then mkdir /smg/out/ping 2>&1 > /dev/null; fi
+
+echo "Building SMG Aggregator biniaries...."
+cp makelocal makefile
+make clean
+make all
+
+
+cp rm_host add_host add_mssql_host nsync ntail gn viz process_resub_buf calc_uptime /smg/bin
+
+if [ $? -ne 0 ]; then 
+    echo -e "SMG Build error... Review previous info...hit any key to continue\c"
+else
+    echo SMG biniaries built successfully. Hit any key to continue.
+fi
+read junk
+
+echo "Building Aggragator Source..."
+
+echo  "Install Nagios?"
+read answer
+if [ $answer = 'y' ]; then
+
+  apt-get update
+    apt-get upgrade
+    apt-get install apache2
+    apt-get install libapache2-mod-php5
+    apt-get install build-essential
+    apt-get install libgd2-xpm-dev
+    useradd -m nagios
+    passwd nagios
+    groupadd nagcmd
+    usermod -a -G nagcmd nagios
+    usermod -a -G nagcmd www-data
+    mkdir ~/downloads
+    cd downloads
+    wget http://prdownloads.sourceforge.net/sourceforge/nagios/nagios-3.2.1.tar.gz
+    wget http://prdownloads.sourceforge.net/sourceforge/nagiosplug/nagios-plugins-1.4.11.tar.gz
+    tar xzf nagios-3.2.1.tar.gz
+    cd nagios-3.2.1
+    ./configure --with-command-group=nagcmd
+    make all
+    make install
+    make install-init
+    make install-config
+    make install-commandmode
+    make install-webconf
+    htpasswd -c /usr/local/nagios/etc/htpasswd.users nagiosadmin
+    /etc/init.d/apache2 reload
+    cd ~/downloads
+    tar xzf nagios-plugins-1.4.11.tar.gz
+    cd nagios-plugins-1.4.11
+    ./configure --with-nagios-user=nagios --with-nagios-group=nagios
+    make
+    make install 
+    ln -s /etc/init.d/nagios /etc/rcS.d/S99nagios
+    /usr/local/nagios/bin/nagios -v /usr/local/nagios/etc/nagios.cfg
+    /etc/init.d/nagios start
+
+    #   set the following in  /usr/local/nagios/etc/nagios.cfg:
+    #     enable_flap_detection=0, execute_service_checks=0, 
+    #     execute_host_checks=0, translate_passive_host_checks=1,
+    #     check_service_freshness=0.    use_large_installation_tweaks=1
+fi
+
+echo "The SMG approach to Nagios is to run passively - all service checks are"
+echo "run by the SMG Applicnce, and scheduled using the Cron Table.  To this end"
+echo "the following changes will be made to /usr/local/nagios/etc/nagios.cfg file:"
+
+echo "enable_flap_detection = 0"
+echo "execute_service_checks = 0"
+echo "execute_host_check = 0"
+echo "translate_passive_host_checks = 1"
+echo "use_large_installation_tweaks = 1"
+echo "check_service_freshness = 0"
+
+echo -e  "Continue (y/n): \c"
+read answer
+if [ $answer = 'n' ]; then
+    echo "Aborting Install..... cleaning up...."
+    exit
+fi
+
+cat /usr/local/nagios/etc/nagios.cfg | sed 's/enable_flap_detection=1/enable_flap_detection=0/g' | sed 's/execute_service_checks=1/execute_service_checks=0/g' |sed 's/execute_host_check=1/execute_host_check=0/g' |sed 's/translate_passive_host_checks=0/translate_passive_host_checks=1/g' | sed 's/use_large_installation_tweaks=0/use_large_installation_tweaks=1/g' | sed 's/check_service_freshness=1/check_service_freshness=0/g' > /tmp/nagios.cfg.tmp
+
+cp /tmp/nagios.cfg.tmp /usr/local/nagios/etc/nagios.cfg
+if [ $? -eq 0 ]; then
+    echo "Successfully modified /usr/local/nagios/etc/nagios.cfg"
+else
+    echo "FAILED: modification of /usr/local/nagios/etc/nagios.cfg, Aborting"
+    echo "Aborting Install..... cleaning up...."
+    exit
+fi
+
+
+echo "Adding the following lines to nagios.cfg (if they dont exist):"
+echo "cfg_file=/usr/local/nagios/etc/objects/hosts.cfg"
+echo "cfg_file=/usr/local/nagios/etc/objects/host_template.cfg"
+echo "cfg_file=/usr/local/nagios/etc/objects/hostgroups.cfg"
+echo "cfg_file=/usr/local/nagios/etc/objects/services.cfg"
+echo "cfg_file=/usr/local/nagios/etc/objects/services_template.cfg"
+echo "cfg_file=/usr/local/nagios/etc/objects/stateless_services.cfg"
+
+grep /usr/local/nagios/etc/objects/hosts.cfg /usr/local/nagios/etc/nagios.cfg
+if [ $? -ne 0 ]; then 
+    echo cfg_file=/usr/local/nagios/etc/objects/hosts.cfg >>  /usr/local/nagios/etc/nagios.cfg
+    echo "adding /usr/local/nagios/etc/objects/hosts.cfg to /usr/local/nagios/etc/nagios.cfg"
+fi
+
+grep /usr/local/nagios/etc/objects/host_templates.cfg /usr/local/nagios/etc/nagios.cfg
+if [ $? -ne 0 ]; then 
+    echo cfg_file=/usr/local/nagios/etc/objects/host_templates.cfg >>  /usr/local/nagios/etc/nagios.cfg
+    echo "adding /usr/local/nagios/etc/objects/host_templates.cfg to /usr/local/nagios/etc/nagios.cfg"
+fi
+
+grep /usr/local/nagios/etc/objects/host_groups.cfg /usr/local/nagios/etc/nagios.cfg
+if [ $? -ne 0 ]; then 
+    echo cfg_file=/usr/local/nagios/etc/objects/host_groups.cfg >>  /usr/local/nagios/etc/nagios.cfg
+    echo "adding /usr/local/nagios/etc/objects/host_groups.cfg to /usr/local/nagios/etc/nagios.cfg"
+fi
+
+grep /usr/local/nagios/etc/objects/services.cfg /usr/local/nagios/etc/nagios.cfg
+if [ $? -ne 0 ]; then 
+    echo cfg_file=/usr/local/nagios/etc/objects/services.cfg >>  /usr/local/nagios/etc/nagios.cfg
+    echo "adding /usr/local/nagios/etc/objects/services.cfg to /usr/local/nagios/etc/nagios.cfg"
+fi
+
+grep /usr/local/nagios/etc/objects/services_template.cfg /usr/local/nagios/etc/nagios.cfg
+if [ $? -ne 0 ]; then 
+    echo cfg_file=/usr/local/nagios/etc/objects/services_template.cfg >>  /usr/local/nagios/etc/nagios.cfg
+    echo "adding /usr/local/nagios/etc/objects/service_template.cfg to /usr/local/nagios/etc/nagios.cfg"
+fi
+
+grep /usr/local/nagios/etc/objects/stateless_services.cfg /usr/local/nagios/etc/nagios.cfg
+if [ $? -ne 0 ]; then 
+    echo cfg_file=/usr/local/nagios/etc/objects/stateless_services.cfg >>  /usr/local/nagios/etc/nagios.cfg
+    echo "adding /usr/local/nagios/etc/objects/stateless_services.cfg to /usr/local/nagios/etc/nagios.cfg"
+fi
+
+#create the following files in /usr/local/nagios/etc/objects/
+touch hosts.cfg
+touch host_template.cfg
+touch hostgroups.cfg
+touch services.cfg
+touch services_template.cfg
+touch stateless_services.cfg
+
+wget http://prdownloads.sourceforge.net/sourceforge/nagios/nsca-2.7.2.tar.gz
+
+echo "Copying modified nsca.c to 2.7.2 source base and REBUILDING nsca..."
+tar -zxvf nsca-2.7.2.tar.gz
+cd nsca-2.7.2/
+./configure
+make all
+cd src
+cp nsca.c /smg/out
+cp ../../agg/nsca.c .
+make nsca
+# OK.  Lets start moving some files around. Issue the 3 commands:
+cp nsca /usr/local/nagios/bin/
+cp ../../sample-config/nsca.cfg /usr/local/nagios/etc/
+chown nagios.nagcmd /usr/local/nagios/etc/nsca.cfg
+chmod g+r /usr/local/nagios/etc/nsca.cfg
+cd $homedir
+
+# Now try to fire that baby up. Issue:
+/usr/local/nagios/bin/nsca -c /usr/local/nagios/etc/nsca.cfg
+if [ $? != 0 ]; then
+    echo -e "\n^[[31mNSCA ERROR: Check nsca Build results^[[0m" 
+else
+    echo -e "\n^[[32mnsca was successfully started.^[[0m"
+fi
+echo -e "\nHit return to continue\c"
+read junk
+cd $home_dir
+
+echo "The Aggregator has been successfully setup.  The last thing to do is to"
+echo "schedule events in the root crontable.  If you prefer to do this 'by hand'"
+echo "you can quit now."
+echo ""
+echo "The following block of text will now be written to the root Crontable."
+echo "NOTE: All schedules will have a comment character '#' as the first char,"
+echo "so, you will have to un-comment any line you wish to activate."
+
+echo "##########################################################################" 
+echo "#####                         Aggregator                            ######" 
+echo "##########################################################################" 
+echo "#* * * * * /smg/bin/process_resub_buf > /dev/null 2>&1" 
+echo "#2 0 * * * if [ -x /usr/local/nagios ]; then /smg/bin/restart_nsync_due_to_log_rotation; fi > /dev/null 2>&1" 
+echo "#* * * * * if [ -x /usr/local/nagios ]; then /smg/bin/nsca_monitor.sh; fi > /dev/null 2>&1" 
+echo "#* * * * * if [ -x /usr/local/nagios ]; then /smg/bin/nagios_monitor.sh; fi > /dev/null 2>&1" 
+echo "#* * * * * if [ -x /usr/local/nagios ]; then /smg/bin/nsync_monitor.sh; fi > /dev/null 2>&1" 
+echo ""
+echo "Modify the Crontable (y/n):\c"
+read junk
+if [ $junk != 'y' -o $junk != 'Y' ]; then
+    echo "Enjoy!"
+    exit
+fi
+
+echo "##########################################################################" >> $ROOT_CRON_FILE
+echo "#####                         Aggregator                            ######" >> $ROOT_CRON_FILE
+echo "##########################################################################" >> $ROOT_CRON_FILE
+echo "#* * * * * /smg/bin/process_resub_buf > /dev/null 2>&1" >> $ROOT_CRON_FILE
+echo "#2 0 * * * if [ -x /usr/local/nagios ]; then /smg/bin/restart_nsync_due_to_log_rotation; fi > /dev/null 2>&1" >> $ROOT_CRON_FILE
+echo "#0,5,10,15,20,25,30,35,40,45,50,55 * * * * if [ -x /usr/local/nagios ]; then /smg/bin/page_if_too_many_daemons; fi > /dev/null 2>&1" >> $ROOT_CRON_FILE
+echo "#* * * * * if [ -x /usr/local/nagios ]; then /smg/bin/nsca_monitor.sh; fi > /dev/null 2>&1" >> $ROOT_CRON_FILE
+echo "#* * * * * if [ -x /usr/local/nagios ]; then /smg/bin/nagios_monitor.sh; fi > /dev/null 2>&1" >> $ROOT_CRON_FILE
+echo "#* * * * * if [ -x /usr/local/nagios ]; then /smg/bin/nsync_monitor.sh; fi > /dev/null 2>&1" >> $ROOT_CRON_FILE
+

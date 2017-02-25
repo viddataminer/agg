@@ -1,0 +1,8 @@
+#define CFG_PATH "/smg/cfg"
+#define PCFG_PATH "/smg/cfg/ping"
+#define BIN_PATH "/smg/bin"
+#define LOG_PATH "/smg/log"
+#define LES_PATH "/smg/les"
+#define PLES_PATH "/smg/les/ping"
+#define OUT_PATH "/smg/out"
+#define POUT_PATH "/smg/out/ping"
