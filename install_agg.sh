@@ -165,6 +165,7 @@ make clean
 make all
 #mkdir /smg 2>&1 > /dev/null
 mkdir -p /smg/bin 2>&1 > /dev/null
+cp calc_uptime rin nsync ntail gn viz process_resub_buf /smg/bin
 cp nsca_monitor.sh nagios_monitor.sh nagios_create_monitor.sh restart_nagios_create_due_to_log_rotation.sh /smg/bin
 cp  nagios_create ntail nagios_search viz event_queue calc_uptime /smg/bin
 if [ $? -ne 0 ]; then
