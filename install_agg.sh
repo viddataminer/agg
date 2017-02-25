@@ -32,6 +32,7 @@ echo -e "Installing the Core Nagios Product... Be Patient Please."
 #read answer
 #if [ $answer = 'y' -o "${answer}" = "yes" -o $answer = 'Y' ]; then
 
+    echo 'y' | apt-get install unzip
     apt-get update  2>&1 > /tmp/update.log
     echo 'y' | apt-get upgrade
 #    echo 'y' | apt-get install apache2
@@ -165,9 +166,10 @@ make clean
 make all
 #mkdir /smg 2>&1 > /dev/null
 mkdir -p /smg/bin 2>&1 > /dev/null
+#cp nsca_monitor.sh nagios_monitor.sh nagios_create_monitor.sh restart_nagios_create_due_to_log_rotation.sh /smg/bin
+#cp  nagios_create ntail nagios_search viz event_queue calc_uptime /smg/bin
+cp *.sh /smg/bin
 cp calc_uptime rin nsync ntail gn viz process_resub_buf /smg/bin
-cp nsca_monitor.sh nagios_monitor.sh nagios_create_monitor.sh restart_nagios_create_due_to_log_rotation.sh /smg/bin
-cp  nagios_create ntail nagios_search viz event_queue calc_uptime /smg/bin
 if [ $? -ne 0 ]; then
     echo ""
     echo "Aggregator /smg/bin biniaries FAILED to build."
@@ -177,16 +179,16 @@ else
     echo "Aggregator /smg/bin biniaries built successfully."
     echo ""
 fi
-cp restart_nagios_create start_new_nagios_create start_nagios_create stop_nagios_create add_mssql_host ntail viz /smg/bin
-if [ $? -ne 0 ]; then
-    echo ""
-    echo "Aggregator admin biniaries FAILED to build."
-    echo ""
-else
-    echo ""
-    echo "Aggregator admin biniaries built successfully."
-    echo ""
-fi
+#cp restart_nagios_create start_new_nagios_create start_nagios_create stop_nagios_create add_mssql_host ntail viz /smg/bin
+#if [ $? -ne 0 ]; then
+#    echo ""
+#    echo "Aggregator admin biniaries FAILED to build."
+#    echo ""
+#else
+#    echo ""
+#    echo "Aggregator admin biniaries built successfully."
+#    echo ""
+#fi
 echo ""
 echo "Scripts are now in place which will monitor basic Nagios functionality."
 echo "Should Nagios Fail, Alerts will be sent via mailx/myairmail.com to a pager."
