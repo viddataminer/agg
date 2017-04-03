@@ -1,0 +1,24 @@
+box_info.h:// Host hsc126-1.med.utah.edu (155.100.126.1) appears to be up.
+box_info.h: Nmap scan report for bahd-d.med.utah.edu (155.100.9.147)
+box_info.h: Nmap scan report for 155.100.9.148
+box_info.h: Nmap scan report for micky-9.med.utah.edu (155.100.9.149)
+box_info.h: Nmap scan report for sarah-9.med.utah.edu (155.100.9.150)
+box_info.h: Host 9-145.med.utah.edu (155.100.9.145) appears to be up.
+box_info.h: Host bahd-d.med.utah.edu (155.100.9.147) appears to be up.
+box_info.h: Host 155.100.9.148 appears to be up.
+box_info.h: Host micky-9.med.utah.edu (155.100.9.149) appears to be up.
+box_info.h: Host sarah-9.med.utah.edu (155.100.9.150) appears to be up.
+box_info.h:    if(ip_first_octet_is_155_and_second_octet_is_100(node_ip) ||
+box_info.h:int ip_first_octet_is_155_and_second_octet_is_100(char *node_ip)
+box_info.h:    if(strncmp(node_ip,"155", 3)) return 0;
+util1.h:// CRITICAL - 155.100.238.209: rta nan, lost 100%|rta=0.000ms;200.000;500.000;0; pl=100%;40;80;; 
+util1.h:// WARNING - 155.100.238.209: rta nan, lost 60%|rta=0.222ms;200.000;500.000;0; pl=100%;40;80;; 
+util1.h:// OK - 155.100.118.12: rta 0.243ms, lost 0%|rta=0.243ms;200.000;500.000;0; pl=0%;40;80;;
+util.h://2011-11-08 19:19:01.50 Logon       Login failed for user 'SRVR\ADSXENPROV'. [CLIENT: 155.100.123.12]
+util.h:// CRITICAL - 155.100.238.209: rta nan, lost 100%|rta=0.000ms;200.000;500.000;0; pl=100%;40;80;; 
+util.h:// WARNING - 155.100.238.209: rta nan, lost 60%|rta=0.222ms;200.000;500.000;0; pl=100%;40;80;; 
+util.h:// OK - 155.100.118.12: rta 0.243ms, lost 0%|rta=0.243ms;200.000;500.000;0; pl=0%;40;80;;
+util.h:// subnet will look like 'subnet.155.100.102'
+util.h.orig.h:// CRITICAL - 155.100.238.209: rta nan, lost 100%|rta=0.000ms;200.000;500.000;0; pl=100%;40;80;; 
+util.h.orig.h:// WARNING - 155.100.238.209: rta nan, lost 60%|rta=0.222ms;200.000;500.000;0; pl=100%;40;80;; 
+util.h.orig.h:// OK - 155.100.118.12: rta 0.243ms, lost 0%|rta=0.243ms;200.000;500.000;0; pl=0%;40;80;;

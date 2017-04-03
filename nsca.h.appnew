@@ -4,7 +4,6 @@
 //#define RESUB_BUF "/smg/tmp/resub_buf"
 #define ALERT_LOG "/tmp/alert.log"
 #define NAGIOS_PIPE "/usr/local/nagios/var/rw/nagios.cmd"
-extern void remove_spaces(lnode);
 
 //extern char *g_tag, *g_service, *g_ip;
 

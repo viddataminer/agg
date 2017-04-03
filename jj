@@ -1,0 +1,15 @@
+box_info.c:// Host hsc126-1.med.utah.edu (155.100.126.1) appears to be up.
+box_info.c: Nmap scan report for bahd-d.med.utah.edu (155.100.9.147)
+box_info.c: Nmap scan report for 155.100.9.148
+box_info.c: Nmap scan report for micky-9.med.utah.edu (155.100.9.149)
+box_info.c: Nmap scan report for sarah-9.med.utah.edu (155.100.9.150)
+box_info.c: Host 9-145.med.utah.edu (155.100.9.145) appears to be up.
+box_info.c: Host bahd-d.med.utah.edu (155.100.9.147) appears to be up.
+box_info.c: Host 155.100.9.148 appears to be up.
+box_info.c: Host micky-9.med.utah.edu (155.100.9.149) appears to be up.
+box_info.c: Host sarah-9.med.utah.edu (155.100.9.150) appears to be up.
+box_info.c:    if(ip_first_octet_is_155_and_second_octet_is_100(node_ip) ||
+box_info.c:int ip_first_octet_is_155_and_second_octet_is_100(char *node_ip)
+box_info.c:    if(strncmp(node_ip,"155", 3)) return 0;
+nsync.c:         hostgroup_name                  Subnet 155.100.139
+nsync.c: PROCESS_SERVICE_CHECK_RESULT;ovpi;eventlog_667_testingtoseeeifwecanfindjimmyisadonkeyionthistext;2;testing to seee if we can find jimmy is a donkey ion this text (155.100.122.36)

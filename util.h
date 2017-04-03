@@ -1,11 +1,8 @@
 #include <string.h>
 #include <time.h>
-#ifndef BIN_PATH
-#define BIN_PATH "/smg/bin"
-#endif
-#ifndef NAG_BIN_PATH
-#define NAG_BIN_PATH "/usr/local/nagios/libexec"
-#endif
+#include "path.h"
+
+//#define NAG_BIN_PATH "/usr/local/nagios/libexec"
 #define NSLOOKUP_SUCCESS 0
 #define PING_OK 0
 #define PING_WARNING 1
@@ -346,7 +343,7 @@ int lookup_ip_in_subnet(char *ip, char *nm)
     int cnt=0, in_type, return_code = 3;
 
     //sprintf(cmd,"/smg/bin/lookup_ip_in_subnet.sh %s", ip);
-    sprintf(cmd, "grep %s[[:space:]] /smg/cfg/ping/* 2>/dev/null | cut -f2 -d':' | cut -f1 -d' '", ip);
+    sprintf(cmd, "grep %s[[:space:]] %s/ping/* 2>/dev/null | cut -f2 -d':' | cut -f1 -d' '", ip,CFG_PATH);
     slog("attempting popen(%s)\n", cmd);
     if(!(pipe = popen(cmd,"r"))) {
         return 0;
@@ -380,9 +377,7 @@ int lookup_name_in_subnet(char *nm, char *ip)
     char *sptr, buf[1000], ping_result[500], *p;
     int in_type, cnt=0, return_code = 3;
 
-    //sprintf(buf,"/smg/bin/lookup_name_in_subnet.sh %s", nm);
-
-    sprintf(buf, "grep [[:space:]]%s$ /smg/cfg/ping/* 2>/dev/null | cut -f2 -d':' | cut -f1 -d' '", nm);
+    sprintf(buf, "grep [[:space:]]%s$ %s/ping/* 2>/dev/null | cut -f2 -d':' | cut -f1 -d' '", nm, CFG_PATH);
 
     slog("attempting popen(%s)\n", buf);
     if(!(pipe = popen(buf,"r"))) {

@@ -17,6 +17,7 @@ gn: gn.c
 	gcc -w -o bin/gn gn.c
 viz: viz.c 
 	gcc -w -o bin/viz viz.c
+#
 process_resub_buf_n: process_resub_buf.c 
 	gcc -w -o bin/check_4_incomming_alerts process_resub_buf.c
 process_nsync_buf_n: process_nsync_buf.c 

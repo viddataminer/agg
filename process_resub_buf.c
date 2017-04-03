@@ -1,8 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "log1.h"
-#define RESUB_BUF "/smg/tmp/resub_buf"
-#define NAGIOS_PIPE "/usr/local/nagios/var/rw/nagios.cmd"
+#include "path.h"
+//#define RESUB_BUF "/smg/tmp/resub_buf"
+//#define NAGIOS_PIPE "/usr/local/nagios/var/rw/nagios.cmd"
 
 
 main(int argc, char **argv)
@@ -41,12 +42,15 @@ main(int argc, char **argv)
     }
 
     while(fgets(buf,10000,fp_buf))  {
-        REMOVE_NEWLINE(buf);
-        if(format_is_bad(buf)) {
-            slog("Resub buf BAD FORMAT: >%s<\n",buf); continue;
+        //REMOVE_NEWLINE(buf);
+        if( (buf[0] != '[') || (buf[11] != ']') || (buf[12] != ' ') || 
+                 (strncmp(&buf[13],"PROCESS",7)) )
+        {
+            slog("process_resub_buf BAD FORMAT: >%s<\n",buf); 
+            continue;
         }
         slog("writing to pipe >%s<\n", buf);
-        fprintf(fp_pipe,"%s\n", buf);
+        fprintf(fp_pipe,"%s", buf);
     }
 
     fclose(fp_pipe);

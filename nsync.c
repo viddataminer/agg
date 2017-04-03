@@ -29,8 +29,8 @@ and uncomment
 #define MAX_TOTAL_HELD_MSGS 10000
 #define DESIRED 2
 #define DERROR -1
-#define NSYNC_BUF "/smg/tmp/nsync_buf"
-#define RESUB_BUF "/smg/tmp/resub_buf"
+//#define NSYNC_BUF "/SMG/tmp/nsync_buf"
+//#define RESUB_BUF "/SMG/tmp/resub_buf"
 
 struct ips {
     char gname[100];
@@ -70,8 +70,8 @@ main(int argc, char **argv)
        exit(0); 
     }
     //sprintf(cmd, "rm -rf %s 2>&1 > /dev/null", NSYNC_BUF);
-    //system("rm -rf /smg/out/process_resub_buf.txt 2>&1 > /dev/null");
-    system(cmd);
+    //system("rm -rf /SMG/out/process_resub_buf.txt 2>&1 > /dev/null");
+    //system(cmd);
 
     sprintf(buf,"tail -f %s", argv[1]);
     if(!(pp_log = popen(buf,"r"))) { 
@@ -190,7 +190,7 @@ int write_to_resub_buf(char *check_result)
     if(change) 
         slog("MODIFIED RESUB BUF from >%s< to >%s<\n",buf,check_result);
 
-    sprintf(resubmission_buf,"echo \"%s\" >> %s", check_result, RESUB_BUF);
+    sprintf(resubmission_buf,"echo \"%s\" >> %s", check_result, NSYNC_BUF);
     slog("SYSTEM RSUB >%s<\n",resubmission_buf);
     system(resubmission_buf);
 }
@@ -565,9 +565,10 @@ int template_is_valid(char *service_being_validated)
     FILE *fpr;
     char buf[1000], serv_buf[1000], *sptr, *service;
 
-    if(!(fpr = fopen("/usr/local/nagios/etc/objects/services_template.cfg","r"))){ 
+    if(!(fpr=fopen("/usr/local/nagios/etc/objects/services_template.cfg","r")))
+    { 
         printf("noop /usr/local/nagios/etc/objects/services_template.cfg");
-        exit(1);
+        return 0;
     }
     while(fgets(buf,4999,fpr)) {
         if(strncmp(buf,"define service{", strlen("define service{")))

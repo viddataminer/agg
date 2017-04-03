@@ -1,0 +1,767 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include "path.h"
+#include "log1.h"
+#include "nsca.h"
+#include "util.h"
+
+int g_no_nagios=0;
+
+#define PSV "%[^|]%*[|]  %[^|]%*[|]  %[^|]%*[|]"
+#define NAGIOS_CFG_DIR "/usr/local/nagios/etc/"
+#define OBJECT_FILE_PATH "/usr/local/nagios/etc/objects"
+#define status_file "/usr/local/nagios/var/status.dat"
+#define LINE_IS_A_COMMENT buf[0] == '#'
+// ENOUGH_TIME_TO_WAIT IS IN SECONDS
+#define ENOUGH_TIME_TO_WAIT 6000
+#define CONFIG_ERR 2
+#define OK 1
+#define EMPTY_PIPE 1
+#define SUBNET 0
+#define HOST 1
+
+#define HEAD 0
+#define TAIL 1 
+#define SUBSTR 2
+#define ALL 3
+#define WILD 4
+int remove_from_smg(char *node);
+int get_files_containing_host(char ary[][200], char *node, char *where_to_look);
+void determine_match_conditions(char *string, int *match_type, int *match_len);
+int rewrite_cfg_file(char *serv_file, char *cl_host, char *cl_service, int host_type, int host_len, int serv_type, int serv_len, int rm_dups_only, char *new_dir);
+int g_prompt=1, g_reload=1;
+main(int argc, char **argv)
+{
+    char buf[5000], cmd[200], nag_struct[5000], host[500], service[500];
+    int i = 0, j = 0, secs, file_changed = 0, match_len=0, rm_dups_only=0;
+    int num_st_serv_removed=0, num_serv_removed=0, serv_type=0, host_type=0;
+    int host_len=0, serv_len=0, num_host_removed=0;
+    //char hosts_removed[100][100], services_removed[100][100];
+    char *sptr, cl_host[100], cl_service[200], dummy[10], tmpbuf[200];
+    char tmp_cl_host[200], new_dir_name[200], bk_dir_name[200];
+    int epoch_tm, srvs_rm_cnt=0, host_rm_cnt=0, remove_host=1, srvs_st_rm_cnt=0;
+    FILE *fpr_host, *fpw_host, *fpw_serv, *fpr_serv, *fpr_stserv, *fpw_stserv;
+
+    open_log_file(argv[0]);  // opens log file /var/opt/OV/log/argv[0]
+
+    printf("-------------- process starting ------v3.0-------\n");
+    slog("-------------- process starting ------v3.0-------\n");
+
+    epoch_tm = epoch();
+
+    sprintf(bk_dir_name,"/tmp/rm_host_bk_%d/", epoch_tm);
+    sprintf(cmd,"mkdir %s 2>&1 > /dev/null", bk_dir_name);
+    system(cmd);
+
+    sprintf(new_dir_name,"/tmp/rm_host_new_%d/", epoch_tm);
+    sprintf(cmd,"mkdir %s 2>&1 > /dev/null", new_dir_name);
+    system(cmd);
+
+    prs_cmd_line(argc, argv, cl_host, cl_service, &remove_host, &rm_dups_only);
+    if(configs_have_problems()) { 
+        printf("You have config errors. Aborting\n"); exit(0);
+    }
+    if(its_an_ip(cl_host)) { 
+        if(nslookup(cl_host, tmp_cl_host) == NSLOOKUP_SUCCESS)
+            strcpy(cl_host, tmp_cl_host);
+    } 
+    lower_case(cl_host);
+    if(g_no_nagios) {
+        if(!remove_from_smg(cl_host)) {
+            printf("remove_from_smg(%s) FAILED\n",cl_host);
+            slog("remove_from_smg(%s) FAILED\n",cl_host);
+        }
+    }
+    printf("Host in question is >%s<\n", cl_host);
+    slog("Host in question is >%s<\n", cl_host);
+    if(remove_host) serv_type=WILD;
+    else determine_match_conditions(cl_service, &serv_type, &serv_len);
+    determine_match_conditions(cl_host, &host_type, &host_len);
+
+    // declare a read and write file pointer for each file being modified
+    slog("calling backup_cfgs\n");
+    backup_cfgs(bk_dir_name);
+    slog("calling rewrite_cfg_file\n");
+    num_serv_removed = rewrite_cfg_file("services.cfg", cl_host, 
+         cl_service, host_type, host_len, serv_type, serv_len, rm_dups_only, new_dir_name);
+    slog("calling rewrite_cfg_file (for stateless)\n");
+    num_st_serv_removed = rewrite_cfg_file("stateless_services.cfg", cl_host, 
+         cl_service, host_type, host_len, serv_type, serv_len, rm_dups_only, new_dir_name);
+    if(remove_host) { 
+        slog("remove_host is %d\n", remove_host);
+        num_host_removed = rewrite_host_cfg_file(cl_host, 
+           host_type, host_len, rm_dups_only, new_dir_name);
+        //rewrite_subnet_file(cl_host);
+        remove_host_from_host_group_files(cl_host);
+    }
+    slog("calling prompt_and_copy \n");
+    prompt_and_copy(rm_dups_only, num_serv_removed, num_st_serv_removed, 
+      num_host_removed, remove_host, cl_service, cl_host, new_dir_name);
+
+    if(configs_have_problems()) { 
+        //copy_backup_cfgs_to_objects_dir(bk_dir_name);
+        sprintf(cmd,"cp %s* /usr/local/nagios/etc/objects",bk_dir_name);
+        system(cmd);
+        printf("Removel of this host causes nagios to error when reloaded\n"); 
+        printf("This is most likely due to the server >%s< STILL being refrenced\n", cl_host);
+        printf("in some nagios config file\n");
+        printf("This changed failed\n");
+        exit(0);
+    } else if(g_reload) reload();
+
+    slog("-------------- process complete -------------\n");
+}
+
+//copy_backup_cfgs_to_objects_dir(bk_dir_name);
+
+int seconds_since_last_update(char *host_service_combo, FILE *fpstatus) 
+{
+    char buf[500], tmp_combo[500], *sptr;
+    int got_combo=0;
+    char last_check_time[50];
+    time_t current_time, secs;
+    int in_block=0;
+    struct tm *newtime;
+
+
+    //newtime = localtime(&current_time);
+    current_time = time(NULL);
+
+    while(fgets(buf,4999,fpstatus)) {
+        if(strstr(buf,"servicestatus {")) in_block=1;
+        if(buf[0] == '}') in_block=0;
+        if(!in_block || LINE_IS_A_COMMENT) continue;
+        if(got_combo) {
+            if(!(sptr = strstr(buf,"last_check="))) 
+                continue;
+            sptr+=11;
+            strcpy(last_check_time,sptr);
+            slog("curr = %d, last_check = %s\n",current_time,last_check_time);
+            return current_time - atol(last_check_time);
+        }
+        if(sptr = strstr(buf,"host_name=")) {
+            sptr += 10;
+            strcpy(tmp_combo, sptr);
+            if(sptr=strchr(tmp_combo,'\n')) *sptr = '\0';
+            continue;
+        }
+        if(sptr = strstr(buf,"service_description=")) {
+            sptr += 20;
+            strcat(tmp_combo, sptr);
+            if(sptr=strchr(tmp_combo,'\n')) *sptr = '\0';
+            if(!strcmp(host_service_combo, tmp_combo))
+                got_combo=1;
+            else memset(tmp_combo,'\0',499);
+        }
+    }
+    slog("never found mactch for >%s<\n",host_service_combo);
+    return -1;
+}
+
+int get_next_service_struct(FILE *fprtail, char *serv_struct, 
+         char *da_host, char *da_serv)
+{
+    char buf[500], tmpbuf[500], service[100], *ptr, *sptr;
+    int got_something=0, recording=0;
+
+    ptr=tmpbuf;
+    while(fgets(buf,4999,fprtail)) {
+        if(strstr(buf,"define service {")) {
+            got_something = 1;
+            recording=1;
+            strcpy(serv_struct, buf);
+            continue;
+        }
+        if(sptr=strstr(buf,"service_description")) {
+            sptr+=20;
+            while(*sptr == ' ' || *sptr == '\t') ++sptr;
+            memset(tmpbuf,0,499); ptr = tmpbuf;
+            while(*sptr != '\n') { *ptr = *sptr; ++sptr; ++ptr; }
+            *ptr='\0';
+            strcpy(da_serv, tmpbuf);
+        }
+        if(sptr=strstr(buf,"host_name")) {
+            sptr+=10;
+            while(*sptr == ' ' || *sptr == '\t') ++sptr;
+            memset(tmpbuf,0,499); ptr = tmpbuf;
+            while(*sptr != '\n') { *ptr = *sptr; ++sptr; ++ptr; }
+            *ptr='\0';
+            strcpy(da_host, tmpbuf);
+        }
+        if(buf[0] == '}') {
+            strcat(serv_struct, buf);
+            return 1;
+        }
+        strcat(serv_struct, buf);
+    }
+    if(!got_something) return 0;
+} 
+
+
+int get_next_host_struct(FILE *fprtail, char *host_struct, char *da_host)
+{
+    char buf[500], tmpbuf[500], service[100], *ptr, *sptr;
+    int got_something=0, recording=0;
+
+    ptr=tmpbuf;
+    while(fgets(buf,4999,fprtail)) {
+        if(strstr(buf,"define host {")) {
+            got_something = 1;
+            recording=1;
+            strcpy(host_struct, buf);
+            continue;
+        }
+        if(sptr=strstr(buf,"host_name")) {
+            sptr+=10;
+            while(*sptr == ' ' || *sptr == '\t') ++sptr;
+            memset(tmpbuf,0,499); ptr = tmpbuf;
+            while(*sptr != '\n') { *ptr = *sptr; ++sptr; ++ptr; }
+            *ptr='\0';
+            strcpy(da_host, tmpbuf);
+        }
+        if(buf[0] == '}') {
+            strcat(host_struct, buf);
+            return 1;
+        }
+        strcat(host_struct, buf);
+    }
+    if(!got_something) return 0;
+}
+
+int configs_have_problems()
+{
+    FILE *ptr;
+    char buf[1000], cmd[200];
+    int warnings_ok = 0, errors_ok = 0, pipe_returned_nothing=1;
+
+    slog("in reload_nagios\n");
+
+    //printf("System( /etc/init.d/nagios reload )  Returns:\n");
+    slog("System( /usr/local/nagios/bin/nagios -v /usr/local/nagios/etc/nagios.cfg )  Returns:\n");
+    ptr=popen("/usr/local/nagios/bin/nagios -v /usr/local/nagios/etc/nagios.cfg","r");
+    printf("\nChecking Nagios Configs...\n");
+    while(fgets(buf,5000,ptr)) {
+        slog("%s\n",buf);
+        if(strstr(buf,"Total Warnings: 0")) warnings_ok = 1;
+        if(strstr(buf,"Total Errors:   0")) errors_ok = 1;
+        if(warnings_ok) printf("%s",buf);
+    }
+    if(warnings_ok && errors_ok) return 0;
+    return 1;
+}
+
+
+int reload()
+{
+    FILE *ptr;
+    char buf[1000], cmd[200];
+    int pipe_returned_nothing=1;
+
+    slog("in reload_nagios\n");
+
+    //printf("System( /etc/init.d/nagios reload )  Returns:\n");
+    slog("System( /etc/init.d/nagios reload )  Returns:\n");
+    ptr=popen("/etc/init.d/nagios reload","r");
+    while(fgets(buf,5000,ptr)) {
+        pipe_returned_nothing=0;
+        printf("%s\n",buf);
+        slog("%s\n",buf);
+        if(strstr(buf,"Running configuration check... CONFIG ERROR!")) {
+            slog("Reload nagios returns config error...");
+            return CONFIG_ERR;
+        }
+    }
+    if(pipe_returned_nothing) {
+        printf("pipe >/etc/init.d/nagios reload< returns nothing...\n");
+        slog("pipe >/etc/init.d/nagios reload< returns nothing...\n");
+        return EMPTY_PIPE;
+    }
+    return OK;
+}
+
+void determine_match_conditions(char *string, int *match_type, int *match_len)
+{
+    char tmpbuf[200], *sptr;
+
+    if(string[0] == '*') {
+        strcpy(tmpbuf, &string[1]);
+        if(sptr = strchr(tmpbuf,'*')) {
+            *sptr = '\0';
+            *match_type=SUBSTR;
+            *match_len=0;
+            strcpy(string, tmpbuf);
+        } else {
+            *match_len = strlen(string);
+            if(*match_len == 1) *match_type=WILD;
+            else *match_type=TAIL;
+            strcpy(string, tmpbuf);
+        }
+    }
+    else if(sptr = strchr(string,'*')) {
+        *sptr='\0';
+        *match_type=HEAD;
+        *match_len = strlen(string);
+    } else *match_type=ALL;
+}
+
+int backup_cfgs(char *backup_dir)
+{
+    char cmd[1000];
+
+    sprintf(cmd, "cp /usr/local/nagios/etc/objects/services.cfg %s", backup_dir);
+    system(cmd);
+
+    sprintf(cmd, "cp /usr/local/nagios/etc/objects/stateless_services.cfg %s", 
+                  backup_dir);
+    system(cmd);
+
+    sprintf(cmd, "cp /usr/local/nagios/etc/objects/hosts.cfg %s", backup_dir);
+    system(cmd);
+
+    sprintf(cmd, "cp /usr/local/nagios/etc/objects/*_host_group.cfg %s", 
+        backup_dir);
+    system(cmd);
+}
+
+int prs_cmd_line(int argc, char **argv, char *cl_host, char *cl_service, int *rm_host, int *rm_dups_only)
+{
+    *rm_dups_only=0;
+
+#ifdef APPLIANCE
+ g_no_nagios=1;
+#endif
+
+    if(argc == 5) { 
+        *rm_host=0;
+        strcpy(cl_host, argv[1]);
+        strcpy(cl_service, argv[2]);
+        *rm_dups_only = 1;
+        g_prompt=0;
+    } else if(argc == 4) { 
+        *rm_host=0;
+        strcpy(cl_host, argv[1]);
+        strcpy(cl_service, argv[2]);
+        *rm_dups_only = 1;
+    } else if(argc == 3) { 
+        if(strstr(argv[2], "no_prompt")) {
+            strcpy(cl_host, argv[1]);
+            *rm_host=1;
+            g_prompt=0;
+            g_reload=0;
+        } else {
+            *rm_host=0;
+            strcpy(cl_host, argv[1]);
+            strcpy(cl_service, argv[2]);
+        }
+    } else if(argc == 2) { 
+        strcpy(cl_host, argv[1]);
+        *rm_host=1;
+    } else { 
+       printf("\n---------------------\n");
+       printf("USAGE: rm_from_nog host_name [service_name*]\n\n"); 
+       printf("example 1:\trm_from_nog adprint1\n");
+       printf("would remove the host adprint1 from the hosts.cfg, and would\n");
+       printf("remove all associated services from the services.cfg file.\n\n");
+       printf("example 2:\trm_from_nog adprint1 queck_Printer_1234\n");
+       printf("would remove JUST the service queck_Printer_1234\n\n");
+       printf("AND.. Dont forget Cool example 3:\trm_from_nog adprint1 queck_Printer_*\n");
+       printf("which would remove ALL of the services starting with 'queck_Printer_'\n");
+       printf("associated with host adprint1.\n---------------------\n\n");
+
+       exit(0); 
+    }
+}
+
+int rewrite_cfg_file(char *serv_file, char *cl_host, char *cl_service, 
+  int host_type, int host_len, int serv_type, int serv_len, int rm_dups_only, char *new_dir)
+{
+    char host[200], serv[200], nag_struct[2000], tmp_file[200];
+    FILE *fpr, *fpw;
+    int num_removed=0;
+
+    sprintf(tmp_file,"%s/%s", OBJECT_FILE_PATH, serv_file);
+    if(!(fpr = fopen(tmp_file,"r"))) { slog("noop %s\n", tmp_file); exit(1); }
+    sprintf(tmp_file,"%s%s", new_dir, serv_file);
+    if(!(fpw = fopen(tmp_file,"w"))) { slog("noop %s\n", tmp_file); exit(1); }
+
+    while(1) {
+        if(!get_next_service_struct(fpr, nag_struct, host, serv))
+            break;
+        if(matches(host, cl_host, host_type, host_len)) {
+            if(matches(serv, cl_service, serv_type, serv_len)) {
+                num_removed++;
+                if(rm_dups_only && num_removed == 1) {
+                    fprintf(fpw,"%s\n\n",nag_struct); 
+                    slog("Found first service...\n"); 
+                    continue;
+                }
+                printf("Removing Service Structure:\n%s\n", nag_struct);
+                slog("Removing Service Structure:\n%s\n", nag_struct);
+                continue;
+            }
+        }
+        fprintf(fpw,"%s\n\n",nag_struct); 
+    }
+    fclose(fpw);
+    fclose(fpr);
+
+
+    return num_removed;
+}
+
+int rewrite_host_cfg_file(char *cl_host, int host_type, int host_len,
+       int rm_dups_only, char *new_dir)
+{
+    FILE *fpr, *fpw;
+    char host[200], serv[200], nag_struct[2000], file[200];
+    int num_removed=0;
+
+    if(!(fpr = fopen("/usr/local/nagios/etc/objects/hosts.cfg","r"))){
+        printf("noop /usr/local/nagios/etc/objects/hosts.cfg\n");
+        exit(1);
+    }
+
+    sprintf(file,"%shosts.cfg", new_dir);
+
+    //if(!(fpw = fopen("/tmp/hosts.tmp","w"))) {
+    if(!(fpw = fopen(file,"w"))) {
+        printf("Can NOT fopen %s\n", file);
+        exit(1);
+    }
+
+    while(1) {
+        if(!get_next_host_struct(fpr, nag_struct, host)) break;
+        if(matches(host, cl_host, host_type, host_len)) {
+            ++num_removed;
+            printf("Removing Host Structure:\n%s\n", nag_struct);
+            slog("Removing Host Structure:\n%s\n", nag_struct);
+            if(rm_dups_only && num_removed == 1) {
+                slog("Found FIRST HOST Structure:\n%s\n", nag_struct);
+                fprintf(fpw,"%s\n\n",nag_struct);
+                continue;
+            }
+        } else fprintf(fpw,"%s\n\n",nag_struct);
+    }
+    fclose(fpw);
+    return num_removed;
+}
+
+/*
+int rewrite_subnet_file(char *host_name)
+{
+    FILE *fpr, *fpw;
+    char subnet_file[100]="subnet.", host_name_in_subnet_file[200], serv[200], nag_struct[2000], ip_in_subnet_file[100];
+    char buf[1000];
+    int num_removed=0;
+
+    strcpy(buf,"%s", host_name);
+    nslookup(host_name, host_ip); 
+    sptr=host_ip + strlen(host_ip -1);
+    while(*sptr != '.') --sptr; 
+    *sptr='\0';
+    sprintf(subnet_file,"subnet.%s", host_ip);
+    sprintf(subnet_file_with_path,"/smg/cfg/ping/%s", subnet_file);
+    sprintf(tmp_subnet_file,"/tmp/%s", subnet_file);
+
+    if(!(fpr = fopen(subnet_file,"r"))){
+        printf("noop >%s<\n", subnet_file);
+        exit(1);
+    }
+    if(!(fpw = fopen(tmp_subnet_file,"w"))) {
+        printf("Can NOT fopen tmp_subnet_file >%s<\n", tmp_subnet_file);
+        exit(1);
+    }
+    while(fgets(buf,1000,fpr)) {
+        sscanf(buf,"%s %s", host_ip_in_subnet_file, host_name_in_subnet_file);
+        if(!strcmp(host_name, host_name_in_subnet_file)) {
+            if(strcmp(host_ip, host_ip_in_subnet_file)) {
+                slog("SYNC ERROR: subnet and dns DIFFER for host >%s<\n\tdns ip %s, subnet ip %s\n", host_name,host_ip, host_ip_in_subnet_file); 
+            }
+        } else fprintf(fpw,"%s\n\n",nag_struct);
+    }
+    fclose(fpw);
+    return num_removed;
+}
+*/
+
+int matches(char *serv, char *cl_service, int type, int len)
+{
+    char buf[200];
+    int cp_loc;
+
+    switch(type)
+    {
+        case ALL: if(!strcmp(cl_service, serv)) return 1; else return 0;
+        case SUBSTR: if(strstr(serv, cl_service)) return 1; else return 0;
+        case HEAD: if(!strncmp(serv,cl_service, len)) return 1; else return 0;
+        case TAIL: 
+            cp_loc = strlen(serv) - len;
+            strcpy(buf,&serv[cp_loc]);
+            if(strcmp(buf,cl_service)) return 1; else return 0;
+        case WILD: return 1;
+        default: slog("ERROR: type unkonwn >%d<\n", type);
+    }
+}
+
+
+int prompt_and_copy(int rm_dups_only, int num_srvs_rm, int num_st_srvs_rm, 
+    int host_rm_cnt, int rm_host, char *cl_service, char *cl_host, char *new_dir_name, char *bk_dir_name)
+{
+    char cmd[1000], dummy[400];
+    int reloadit=0;
+
+    slog("in prompt_and_copy\n");
+
+    if(host_rm_cnt ||  num_srvs_rm || num_st_srvs_rm) {
+ 
+        if(rm_dups_only) printf("So, There are %d services and %d ss services >%s< for host %s.  These will be removed, BUT ONE. Continue?\n",  num_srvs_rm, num_st_srvs_rm, cl_service, cl_host );
+        else printf("So, %d host struct's, %d services, and %d stateless services will be removed.\nHit 'y' to continue...", host_rm_cnt, num_srvs_rm, num_st_srvs_rm);
+        if(g_prompt) {
+            gets(dummy);
+            if(dummy[0] != 'Y' && dummy[0] != 'y') exit(0);
+            reloadit=1;
+        }
+    } else {
+        printf("Node >%s< does NOT exist in nagios. Checking smg files...\n",
+          cl_host);
+        slog("Node >%s< does NOT exist in nagios. Checking smg files...\n",
+          cl_host);
+    }
+    if(num_srvs_rm) {
+        sprintf(cmd,"cp %sservices.cfg /usr/local/nagios/etc/objects/services.cfg", new_dir_name);
+        system(cmd);
+    } if(num_st_srvs_rm) {
+        sprintf(cmd,"cp %sstateless_services.cfg /usr/local/nagios/etc/objects/stateless_services.cfg", new_dir_name);
+        system(cmd);
+    } if(rm_host) {
+        if(!remove_from_smg(cl_host)) {
+            printf("remove_from_smg(%s) FAILED\n",cl_host);
+            slog("remove_from_smg(%s) FAILED\n",cl_host);
+        }
+        sprintf(cmd,"cp %shosts.cfg /usr/local/nagios/etc/objects/hosts.cfg", new_dir_name);
+        system(cmd);
+    }
+    // for good mesure, make sure the host is NOT in any *_host_group.cfg file
+    sprintf(cmd,"cp /usr/local/nagios/etc/objects/*_host_group.cfg %s", bk_dir_name);
+    sprintf(cmd,"/smg/bin/rm_from_host_groups.sh %s", cl_host);
+    slog("system(%s)\n", cmd);
+    system(cmd);
+    //if(reloadit) // reload();
+    //      printf("YOU MUST MANUALLY RELOAD...\n");
+}
+int remove_from_smg(char *node)
+{
+    char file[200], rm_cmd[200], cmd[200], *sptr, subnet[200] ;
+    char ip[20], file_names[50][200], dummy[5];
+    int i, ret, num_files=0;
+    if(strlen(node) < 3) {
+        printf("remove_from_smg: NOTICE: not doing node >%s<\n", node); 
+        slog("remove_from_smg: NOTICE: not doing node >%s<\n", node); 
+        return 1;
+    }
+//    printf("in remove_from_smg(%s)\n", node);
+    slog("in remove_from_smg(%s)\n", node);
+    sprintf(rm_cmd,"ls /smg/out/*%s* 2>/dev/null; if [ $? -eq 0 ]; then rm /smg/out/*%s*; fi", node, node);
+    slog("system(%s)\n", rm_cmd);
+    system(rm_cmd);
+    sprintf(rm_cmd,"ls /smg/out/trending/*%s* 2>/dev/null; if [ $? -eq 0 ]; then rm /smg/out/trending/*%s*; fi", node, node);
+    slog("system(%s)\n", rm_cmd);
+    system(rm_cmd);
+    sprintf(rm_cmd,"ls /smg/les/*%s* 2>/dev/null; if [ $? -eq 0 ]; then rm /smg/les/*%s*; fi", node, node);
+    slog("system(%s)\n", rm_cmd);
+    system(rm_cmd);
+    sprintf(rm_cmd,"ls /smg/les/ping/*%s* 2>/dev/null; if [ $? -eq 0 ]; then rm /smg/les/ping/*%s*; fi", node, node);
+    slog("system(%s)\n", rm_cmd);
+    system(rm_cmd);
+    sprintf(rm_cmd,"ls /smg/log/*%s* 2>/dev/null; if [ $? -eq 0 ]; then rm /smg/log/*%s*; fi", node, node);
+    slog("system(%s)\n", rm_cmd);
+    system(rm_cmd);
+/*
+    if((ret = nslookup(node, ip)) != NSLOOKUP_SUCCESS) {
+        slog("NSLOOKUP FAILED: nslookup(%s) returns %s\n", node, ip);
+        find_subnet_file_containg_node_name(node, subnet);
+    } else strcpy(subnet, ip);
+
+    sptr=subnet;
+    for(i=0; i<3;i++) {
+        if(!(sptr=strchr(sptr,'.'))) {
+            printf("Bad IP >%s<\n", subnet); return 0;
+        } else if(i < 2) sptr++;
+    }
+    *sptr='\0';
+*/
+    if(!find_file_containg_node_name(node, subnet, SUBNET)) {
+        printf("NO host named %s in ANY subnet file...\n", node);
+        slog("Can not find node >%s< in ANY subnet file...\n", node);
+    } else {
+        sprintf(cmd,"grep -v %s %s > /tmp/subnet%s.tmp", node, subnet, node);
+        slog("system(%s)\n", cmd);
+        system(cmd);
+        sprintf(cmd,"mv  /tmp/subnet%s.tmp %s",
+               node, subnet);
+        slog("system(%s)\n", cmd);
+        system(cmd);
+        printf("Host %s was removed from %s\n", node, subnet);
+    }
+
+    if(host_name_is_in_host_file(node, file)) {
+        sprintf(cmd,"grep -v %s %s > /tmp/jimmy.tmp", node, file);
+        slog("system(%s)\n", cmd);
+        system(cmd);
+        sprintf(cmd,"mv  /tmp/jimmy.tmp %s", file);
+        slog("system(%s)\n", cmd);
+        system(cmd);
+        printf("Host %s was removed from %s\n", node, file);
+    } else 
+        printf("NO host named %s in ANY smg host file\n", node);
+
+    num_files = get_files_containing_host(file_names, node, "/smg/cfg/*");
+    //printf("Host %s was in %d cfg files file\nn", node, num_files);
+
+    if(!num_files) printf("NO host named %s in ANY smg cfg files.\n", node);
+    else printf("removing %s from %d smg cfg files\n", node, num_files);
+
+    for(i = 0; i < num_files; i++) {
+        sprintf(cmd,"grep -v %s %s > /tmp/logck_%s.tmp",
+               node, file_names[i], node);
+        slog("system(%s)\n", cmd);
+        system(cmd);
+        printf("removing %s from %s", node, file_names[i]);
+        sprintf(cmd,"mv /tmp/logck_%s.tmp %s", node, file_names[i]);
+        slog("system(%s)\n", cmd);
+        system(cmd);
+    }
+    if(i) printf("Node >%s< was removed from /smg/cfg files\n", node);
+    return 1;
+}
+
+int host_name_is_in_host_file(char *rhost_name, char *file)
+{
+    char buf[1000], subnet[200], *sptr;
+    char host_ip[400], file_name[100], host_name[200], host_domain[200];
+    FILE *fp, *pp;
+
+    if(!(pp = popen("ls /smg/cfg/*.hosts", "r"))) {
+          printf("can not open %s to write\n", file_name);
+          return 0;
+    }
+    while(fgets(file_name,1000,pp)) {
+        REMOVE_NEWLINE(file_name);
+        if(!(fp = fopen(file_name, "r"))) {
+              printf("can not open %s to write\n", file_name);
+              pclose(pp);
+              return 0;
+        }
+        while(fgets(buf,1000,fp)) {
+           if(buf[0] == '#') continue;
+           sscanf(buf,PSV, host_name, host_ip, host_domain);
+           if(!strcmp(rhost_name, host_name)) {
+               strcpy(file, file_name);
+               pclose(pp);
+               fclose(fp);
+               return 1;
+           }
+        }
+        fclose(fp);
+    }
+    pclose(pp);
+    return 0;
+}
+
+//grep -v " ancctx93.med.utah.edu" /smg/cfg/ping/subnet./smg/cfg/ping/subnet.155.100.56
+
+int find_file_containg_node_name(char *node, char *subnet, int flag)
+{
+    FILE *pp;
+    char *sptr, cmd[1000], buf[1000];
+
+    if(flag == HOST) sprintf(cmd, "grep %s /smg/cfg/*.hosts", node); 
+    else sprintf(cmd, "grep %s /smg/cfg/ping/subnet.*", node); 
+    // returns, for example:
+    //  /smg/cfg/ping/subnet.155.100.122:155.100.122.50 smgnagios.med.utah.edu
+slog("in find_subnet_file. grep cmd is:\n>\t%s<\n",cmd);
+
+    if(!(pp = popen(cmd , "r"))) {
+          printf("can not popen %s to read\n", cmd);
+          return 0;
+    }
+
+    memset(buf,0,sizeof(buf));
+    fgets(buf,999,pp); 
+slog("cmd returns >%s<\n", buf);
+
+    if(strlen(buf) < 3) return 0;
+
+    sptr=buf;
+    if(sptr = strchr(buf,':')) *sptr = '\0';
+    strcpy(subnet, buf);
+slog("file %s contains >%s<\n", subnet, node);
+    return 1;
+}
+
+int get_files_containing_host(char ary[][200], char *node, char *where_to_look)
+{
+    FILE *pp;
+    char *sptr, cmd[1000], buf[1000];
+    int num_got=0;
+
+    sprintf(cmd, "grep %s %s", node, where_to_look);
+    // returns, for example:
+    //  /smg/cfg/ping/subnet.155.100.122:155.100.122.50 smgnagios.med.utah.edu
+    slog("in find_subnet_file. grep cmd is:\n>%s<\n",cmd);
+
+    if(!(pp = popen(cmd , "r"))) {
+          printf("can not popen %s to read\n", cmd);
+          return 0;
+    }
+
+    memset(buf,0,sizeof(buf));
+    while(fgets(buf,999,pp)) {
+        if(strlen(buf) < 3) continue;
+        sptr=buf;
+        if(sptr = strchr(buf,':')) {
+            *sptr = '\0';
+            strcpy(ary[num_got++], buf);
+            slog("file %s contains >%s<\n", buf, node);
+        } else {
+            slog("in load_ary..(): NO : in grep output >%s<\n", buf);
+        }
+    }
+    return num_got;
+}
+
+int remove_host_from_host_group_files(char *host)
+{
+    char *sptr, buf[1000], cmd[200], file_name[200];
+    FILE *fp;
+
+    sprintf(file_name,"%snagios.cfg", NAGIOS_CFG_DIR);
+
+    if(!(fp = fopen(file_name, "r"))) {
+          printf("can not open %s to read\n", file_name);
+          return 0;
+    }
+    slog("processing %s\n", file_name);
+    while(fgets(buf,1000,fp)) {
+        REMOVE_NEWLINE(buf);
+        if(!strncmp(buf,"cfg_file=", 9)) {
+
+            if(!strstr(buf, "_group.cfg")) continue;
+
+            sprintf(cmd,"perl -ni -e 'print unless /[[:space:]]%s/' %s",
+               host, &buf[9]);
+#ifdef DEBUG1
+            slog("%s",cmd);
+#endif
+            system(cmd);
+        }
+        if(!strncmp(buf,"cfg_dir=", 8)) {
+            sprintf(cmd,"perl -ni -e 'print unless /[[:space:]]%s/' %s/*_group.cfg",
+               host, &buf[8]);
+#ifdef DEBUG1
+            slog("%s",cmd);
+#endif
+            system(cmd);
+        }
+    }
+}

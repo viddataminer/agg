@@ -2,10 +2,13 @@
 #include <stdarg.h> 
 #include <string.h> 
 #include <time.h> 
+/*
 #define CFG_PATH "/smg/cfg"
 #define BIN_PATH "/smg/bin"
 #define LOG_PATH "/smg/log"
 #define LES_PATH "/smg/les"
+*/
+#include "path.h"
 
 #define REMOVE_NEWLINE(buf) \
     if(sptr = strchr(buf,'\n')) *sptr = '\0'; \
@@ -29,14 +32,6 @@ void slog( char *, ... );
 #define WARN 1
 #define WARNING 1
 #define INFO 0
-
-#ifndef CFG_PATH
-#define CFG_PATH "/smg/cfg"
-#endif
-
-#ifndef LOG_PATH 
-#define LOG_PATH "/smg/log"
-#endif
 
 extern int num_error_strs;
 extern int num_errors;

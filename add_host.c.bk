@@ -1,0 +1,649 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "log1.h"
+#include "nsca.h"
+#include "util.h"
+#include "box_info.h"
+#define PROMPT 34
+#include "add_mssql_host.h"
+//#include "get_node_info.h"
+#define ADD_HOST_FAILED_UNKNOWN_OS 10
+#define CHECK_FOR_PING_ONLY 13
+#define NOT_PINGABLE 11
+#define ACCOUNT_NOT_ACTIVE 12
+#define IN_HOST_FILE 19
+#define NSLOOKUP_FAILED 14
+#define ADDED_TO_NAGIOS 15
+#define SUCCESS 0
+#define MEMORY 1
+#define SWAP 2
+#define CPU 3
+#define MOUNT 4
+#define DEFAULT 4
+#define DISABLE 5
+#define MODIFY 6
+char ip_list[3000][20];
+int host_ip_already_in_subnet_file(char *rhost_ip, char *file);
+int host_name_already_in_host_file(char *rhost_name, char *file, char *domain);
+int ping_only=0;
+int atn=0, ain=0, acct_not_active=0;
+char sain[200][100];
+char satn[200][100];
+char sacct_not_active[200][100];
+char not_in_dns[500][20]; 
+int notindns=0;
+char add_by_hand[200][100];
+int abh=0, g_setup_ssh=0;
+int g_install_mssql_logcks=1;
+int g_use_default_ignore_codes=1;
+int g_use_command_line_comm_strs;
+int  g_num_domains=0, g_num_comms=0; 
+char g_domains[10][100], g_comm_strs[10][100];
+int main(int argc, char **argv)
+{
+
+
+    char subnet[100], ip_to_check[100], node_name[100], *sptr, *ver="3.2";
+    int ret =0, i, ahf=0, po=0, atn=0, ana=0, ihf=0, nf=0, np=0, goof_ball=0;
+    int num_pingable_and_in_dns=0;
+
+    if(argc == 1) { 
+        printf("USAGE: add_host hostname_or_ip [-no_logck] [-prompt] (for error codes) [-no_default] (dont use default error codes) or subnet v%s\n", ver); 
+        exit(0); 
+    }
+ 
+    open_log_file(argv[0]);
+    if(argc >= 3) {
+        if(strstr(argv[2],"-ping_only")) ping_only=1;
+        if(strstr(argv[2],"-no_logck")) g_install_mssql_logcks=0;
+        if(strstr(argv[2],"-no_default")) g_use_default_ignore_codes=0;
+        if(strstr(argv[2],"-prompt")) g_use_default_ignore_codes = PROMPT;
+        if(strstr(argv[2],"-domain") || (strstr(argv[2],"-snmp")))  {
+            g_use_command_line_comm_strs = 1;
+            get_strs(argc, argv, g_domains, g_comm_strs, &g_num_domains, &g_num_comms);
+#ifdef DEBUG1
+            slog("NON- DEFAULT strings:\n");
+            for(i=0; i < g_num_domains; i++) 
+                 slog("DOMAIN %d: %s\n", i, g_domains[i]);
+            for(i=0; i < g_num_comms; i++) 
+                 slog("STR %d: %s\n", i, g_comm_strs[i]);
+#endif
+        }
+        //if(strstr(argv[2],"-no_nmap")) g_no_nmap = 1;;
+    }
+    if(argv[1][0] == '-') { 
+        printf("Sorry, FLAGS (-p or -n) MUST be listed AFTER the host name or subnet\n"); 
+        exit(0); 
+    }
+    printf("\n		[1m  ------------  add_host v%s  ------------  [0m\n", ver);
+    slog("-------------------STARTING------------------v%s\n", ver);
+    if(sptr= strchr(argv[1], '/')) {
+        strcpy(subnet,argv[1]);
+        num_pingable_and_in_dns = get_list_from_nmap(subnet);
+        printf("nmap shows %d pingable nodes in subnet %s\n",
+               num_pingable_and_in_dns + notindns, subnet);
+        printf("Of those,  %d are in DNS\n",
+               num_pingable_and_in_dns);
+        REMOVE_NEWLINE(subnet);
+#ifdef NEEDED
+        printf("nmap returns the following ping-able nodes:\n");
+        for (i=0; i < num_pingable_and_in_dns; i++) {
+            printf("%s\n", ip_list[i]);
+        }
+#endif
+        for (i=0; i < num_pingable_and_in_dns; i++) {
+            if(nslookup(ip_list[i], node_name) != NSLOOKUP_SUCCESS)
+                slog("NSLOOKUP FAILED for %s\n", ip_list[i]);
+            //printf("getting node info for %s %s\n", ip_list[i], node_name);
+            slog("getting node info for %s %s\n", ip_list[i], node_name);
+            printf("Attempting to add host >%s<\n", ip_list[i]);
+            ret = add_host(ip_list[i]);
+            switch(ret) {
+                case ADD_HOST_FAILED_UNKNOWN_OS: ahf++; break;
+                case CHECK_FOR_PING_ONLY: po++; break;
+                case ACCOUNT_NOT_ACTIVE: ana++; break;
+                case IN_HOST_FILE: ihf++; break;
+                case NSLOOKUP_FAILED: nf++; break;
+                case NOT_PINGABLE: np++; break;
+                case ADDED_TO_NAGIOS: atn++; break;
+                default: goof_ball++;
+            }
+            slog("BACK getting node info for %s\n", node_name);
+        }
+        printf("Subnet %s contains %d PING-ABLE/DNS-ABLE nodes\n", subnet, num_pingable_and_in_dns);
+        printf("Added to Host file: %d\n", atn);
+        printf("Already in host file: %d\n", ihf);
+        printf("Account not active - ping only: %d\n", ihf);
+
+    } else if(argv[1][0] == '-') {
+        strcpy(subnet,&argv[1][1]);
+        REMOVE_NEWLINE(subnet);
+        for (i=0; i < 256; i++) {
+            sprintf(ip_to_check,"%s.%d", subnet, i);
+            if(nslookup(ip_to_check, node_name) != NSLOOKUP_SUCCESS)
+                slog("NSLOOKUP FAILED for %s\n", ip_to_check);
+            //printf("getting node info for %s %s\n", ip_list[i], node_name);
+            slog("getting node info for %s\n", node_name);
+            ret = add_host(ip_to_check);
+            switch(ret) {
+                case ADD_HOST_FAILED_UNKNOWN_OS: ahf++; break;
+                case CHECK_FOR_PING_ONLY: po++; break;
+                case ACCOUNT_NOT_ACTIVE: ana++; break;
+                case IN_HOST_FILE: ihf++; break;
+                case NSLOOKUP_FAILED: nf++; break;
+                case NOT_PINGABLE: np++; break;
+                case ADDED_TO_NAGIOS: atn++; break;
+                default: goof_ball++;
+            }
+            slog("BACK getting node info for %s\n", node_name);
+        }
+        printf("Subnet %s contains %d PING-ABLE/DNS-ABLE nodes\n", subnet, num_pingable_and_in_dns);
+        printf("Added to Host file: %d\n", atn);
+        printf("Already in host file: %d\n", ihf);
+        printf("Account not active - ping only: %d\n", ihf);
+    } else add_host(argv[1]);
+}
+
+int add_host(char *host)
+{
+  char string[100], host_ip[30], host_name[200], subnet[20], *sptr;
+  char os[10], file_changed[200], domain[100];
+  char file_name[200], dummy[200], os_type[100], name[100], result_text[300];
+  //char key[11]="ABCDEFGHIJ";
+  char cmd[2000], rsp[1000], sub_file_name[100], host_file_name[200], user[100];
+  char space_buf[300], info_buf[300];
+  static char *key="^#*$@";
+  int set_up_ping_only=0, nagadm_acct_is_active=0;
+  int got_file=0, i, slen,klen,x, ret_val, snmp_is_available=0;
+  int acct, snmp, already_in_subnet_file=0, ping_result=0, result=0;
+  char tmpbuf[1000], *ver="2.2";
+  FILE *fp;
+
+  klen = strlen(key);
+
+
+  if(!its_an_ip(host)) {
+      strcpy(host_name, host);
+      lower_case_and_warn(host_name, "Upper Case is NOT allowed in host names - converting to lower case..\n");
+      if(nslookup(host_name, host_ip) != SUCCESS) {
+          printf("nslookup FAILED for NAME >%s<\n", host_name);
+          return NSLOOKUP_FAILED;
+      }
+      //lower_case(host_name);
+      //printf("\nnslookup on %s returns [31m%s[0m\n",  host_name, host_ip);
+  } else {
+      strcpy(host_ip, host);
+      if(nslookup(host_ip, host_name) != SUCCESS) {
+          printf("host ip is not in dns >%s<\n", host_ip);
+          strcpy(host, host_ip);
+          printf("using host name of >%s<\n", host_name);
+          //return NSLOOKUP_FAILED;
+      } else {
+          printf("\nnslookup(%s) returns [31m %s[0m \n",host_ip,host_name);
+          lower_case_and_warn(host_name, 
+           "DNS returns UPPER CASE host names - converting to lower case..\n");
+      }
+  }
+
+  if((result = get_box_info(host_ip, os_type, domain, &nagadm_acct_is_active, 
+                     &snmp_is_available)) != FOUND_OS_TYPE)
+  {
+      if(result == PING_FAILED) slog("Can NOT ping %s\n", host_ip);
+      else slog("get_bos_info Could NOT determine os type for %s\n", host_ip);
+      slog("---------------complete------------------\n");
+      exit(2);
+  } slog("get_box_info returns os >%s<, active_acct = %d\n", os_type, nagadm_acct_is_active);
+
+  if(host_ip_already_in_subnet_file(host_ip, sub_file_name)) {
+      if(host_name_already_in_host_file(host_name, host_file_name, domain)) {
+          printf("\nHost %s, IP %s, is already defined in:\n",host_name, host_ip);
+          printf("  [32m%s[0m, for ping checks, and\n", sub_file_name);
+  	  printf("  [32m%s[0m for default checks: memory, disk, cpu and swap.\n\n", host_file_name);
+          strcpy(sain[ain], host_name);
+          if(strstr(host_file_name, "indow")) {
+              if(g_install_mssql_logcks) {
+                  if(nagadm_acct_is_active) {
+                      printf("[33mChecking for MS SQL Error logs on this Windows node.[0m  [34mBe patient please...[0m\n\n");
+                      add_mssql_host(host_name, domain, g_use_default_ignore_codes);
+                  }
+              } else printf("NOT installing MS SQL Log checking on this node...\n");
+          } 
+          return IN_HOST_FILE;
+      }
+      if(ping_only) 
+           printf("\nIP >%s< is already in %s\n\n",host_ip, sub_file_name);
+      else printf("\nIP >%s< is already in %s,\nbut default checks have NOT been added.\n",host_ip, sub_file_name);
+      already_in_subnet_file=1;
+  } else {
+      add_host_to_subnet_file(host_ip);
+  }
+  
+  if(ping_only) return CHECK_FOR_PING_ONLY;
+  //printf("Acquiring host information.  One moment please....\n");
+
+  //printf("returned;get_box_info(host_ip = >%s<, os_type = >%s<, acct = >%d<, snmp = >%d<\n", host_ip, os_type, nagadm_acct_is_active, 
+  //     snmp_is_available);
+
+  if(!nagadm_acct_is_active) {
+      if(already_in_subnet_file)
+           printf("\n\n[32m%s[0m is already in the subnet file for pinging,\n",host_name);
+      else printf("\n%s has been added to list of nodes to be pinged,\n",host_name);
+      printf("but [31mthe nagios administration account is NOT active on this node![0m\n");
+      printf("Please activate account and re-run this command to enable\n");
+      printf("further monitoring.  Thanks.\n\n");
+      strcpy(sacct_not_active[++acct_not_active], host_name);
+      return ACCOUNT_NOT_ACTIVE;
+  } else printf("nagios admin account is active!\n");
+
+
+  if(!add_host_to_host_file(host_ip, os_type, file_changed, domain)) {
+      printf("FAILED to add host >%s< for basic monitoring\n", host_name); 
+      return ADD_HOST_FAILED_UNKNOWN_OS;
+  }
+  else {
+    sprintf(info_buf,"   ***  Added %s to %s  ***   ", host_name, file_changed);
+    get_space_buf(info_buf, space_buf);
+    printf("\n%s[47m%s[0m\n\n", space_buf,info_buf);
+    //printf("\n  [47m  ***  Added %s to %s  ***  [0m\n\n", host_name, file_changed);
+    strcpy(satn[atn], host_name);
+
+    if(strstr(domain, "ad") || strstr(domain, "srvr") ||
+       strstr(domain, "AD") || strstr(domain, "SRVR")) {
+        if(g_install_mssql_logcks) {
+            if(nagadm_acct_is_active) {
+                printf("Checking for MS SQL Error logs on this Windows node.  Be patient please...\n");
+                add_mssql_host(host_name, domain,g_use_default_ignore_codes);
+            } printf("NOT checking for mssql log - NO ACTIVE ACCONT");
+        } else printf("NOT installing MS SQL Log checking on this node...\n");
+    }
+    return ADDED_TO_NAGIOS;
+  }
+}
+
+int host_ip_already_in_subnet_file(char *rhost_ip, char *file)
+{
+    char file_name[100], buf[100], subnet[200], *sptr;
+    char host_ip[40], host_name[200];
+    FILE *fp;
+
+      strcpy(subnet, rhost_ip);
+      sptr=strchr(subnet, '\0');
+      while(*sptr != '.') --sptr;
+      *sptr = '\0';
+      sprintf(file_name, "/smg/cfg/ping/subnet.%s", subnet);
+      strcpy(file, file_name);
+      //printf("opening >%s<\n", file_name);
+      if(!(fp = fopen(file_name, "r"))) {
+            printf("can not open %s to read\n", file_name);
+            return 0;
+     } 
+      while(fgets(buf,1000,fp)) {
+         sscanf(buf,"%s %s", host_ip, host_name);
+         //printf("checking %s >%s< >%s<\n", buf, rhost_ip, host_ip);
+         if(!strcmp(rhost_ip, host_ip)) { fclose(fp); return 1; }
+      }
+      fclose(fp);
+      return 0;
+}
+
+
+int host_name_already_in_host_file(char *rhost_name, char *file, char *dom)
+{
+    char buf[1000], subnet[400], *sptr;
+    char host_ip[400], file_name[400], host_name[400], host_domain[400];
+    FILE *fp, *pp;
+//      nslookup(rhost_ip, rhost_name);
+      lower_case_and_warn(rhost_name, "DNS returns UPPER CASE host names - converting to lower case..\n");
+      if(!(pp = popen("ls /smg/cfg/*.hosts", "r"))) {
+            printf("can not open %s to write\n", file_name);
+            return 0;
+      }
+      while(fgets(file_name,1000,pp)) {
+          REMOVE_NEWLINE(file_name);
+          if(!(fp = fopen(file_name, "r"))) {
+                printf("can not open %s to write\n", file_name);
+                continue;
+                //pclose(pp); 
+                //return 0;
+          }
+          while(fgets(buf,1000,fp)) {
+             if(buf[0] == '#') continue;
+             sscanf(buf,"%s %s %s", host_name, host_ip, host_domain);
+             if(!strcmp(rhost_name, host_name)) { 
+                 strcpy(file, file_name); 
+                 strcpy(dom, host_domain); 
+                 pclose(pp); 
+                 fclose(fp); 
+                 return 1; 
+             }
+          }
+          fclose(fp);
+      }
+      pclose(pp);
+      return 0;
+}
+
+int prompt_for_sun_info(char *host_name, char *filename)
+{
+    int create_new_cpu=0;
+    int create_new_mount=0;
+    int create_new_swap=0;
+    int create_new_memory=0, ret_val;
+
+    char output[100];
+
+    printf("Enter 'D' to disable, Wn:Cn:EBAn to modify, or Return to accept defaults.");
+    printf("Service Check: mount (Crit 94%% used, Warn 89%% used): ");
+    if(ret_val = process_input(output) != DEFAULT) 
+        replace_value("mount", output, ret_val, filename);
+
+    printf("Service Check: swap (Crit 10%% available, Warn 20%% available, eba: 3): ");
+    if(process_input(output) != DEFAULT)
+        replace_value("swap", output, ret_val, filename);
+
+    printf("Service Check: cpu_use (Crit 4%% idle, Warn 10%% idle, eba: 3): ");
+    if(process_input(output) != DEFAULT)
+        replace_value("cpu", output, ret_val, filename);
+
+    printf("Service Check: memory (Crit 5%% available, Warn 10%% available, eba: 4): ");
+    if(process_input(output) != DEFAULT)
+        replace_value("memory", output, ret_val, filename);
+}
+
+int process_input(char *output)
+{
+    //gets(output);
+    if(!*output) return DEFAULT;
+    if(*output == 'D' || *output == 'd') return DISABLE;
+    return MODIFY;
+}
+
+#define CSV8  "%[^,]%*[,]  %[^,]%*[,]  %[^,]%*[,]  %[^,]%*[,]  %[^,]%*[,]  %[^,]%*[,]  %[^,]%*[,]  %[^,]%*[,]"
+int replace_value(char *type, char *output, int ret_val, char *filename)
+{
+    
+    FILE *fp, *fp_tmp;
+    int num, got_error=0, got_warn=0, got_eba=0, change_complete=0;
+    char error[100], warn[100], eba[100], buf[1000], start_str[1000], *sptr;
+    char cmd[100];
+
+    if(!(fp = fopen(filename,"r"))) {
+        slog("Can not open %s\n", filename);
+        printf("Can not open %s\n", filename);
+        return 1;
+    }
+    if(!(fp_tmp = fopen("/tmp/tmpyzz","w"))) {
+        slog("Can not open %s\n", "/tmp/tmpyzz");
+        printf("Can not open %s\n", "/tmp/tmpyzz");
+        return 1;
+    }
+    num = sscanf(output,"%[^:]%*[:]  %[^:]%*[:]  %[^:]%*[:]", error, warn, eba);
+    if(num != 3) {
+        slog("replace_value() scanf failed, returned %d\n", num);
+        printf("Can not open %s\n", "/tmp/tmpyzz");
+        return 1;
+    }
+
+    sprintf(start_str, "PROCESS: %s", type); 
+
+    while(fgets(buf,1000,fp)) {
+        fprintf(fp_tmp,"%s", buf);
+        if(!strstr(buf, start_str) || change_complete) continue;
+        while(fgets(buf,1000,fp)) {
+            REMOVE_NEWLINE(buf);
+            if(strstr(buf,"PROCESS: ")) {
+                slog("ERROR: Shouldnt have seen PROCESS.  Aborting\n");
+                printf("ERROR: Shouldnt seen PROCESS.  Aborting\n");
+                exit(0); 
+            } else if(strstr(buf,"ERROR:")) {
+                strcat(buf, error);
+                fprintf(fp_tmp,"%s", buf);
+                got_error=1;
+            } else if(strstr(buf, "WARNING:")) {
+                strcat(buf, warn);
+                fprintf(fp_tmp,"%s", buf);
+                got_warn=1;
+            } else if(strstr(buf, "ERRORS_BEFORE_ALERT:")) {
+                strcat(buf, eba);
+                fprintf(fp_tmp,"%s", buf);
+                got_eba=1;
+            } else fprintf(fp_tmp,"%s", buf);
+            if(got_eba && got_warn && got_error) {
+                change_complete=1;
+                break;
+            }
+        }
+    }
+    fclose(fp);
+    fclose(fp_tmp);
+    sprintf(cmd, "cp /tmp/tmpyzz %s", filename);
+    system(cmd);
+}
+int create_default_sun_cfg(char *host_name, char *file_name)
+{
+    char cmd[100];
+
+    sprintf(cmd, "cp /smg/cfg/sun_default.cfg /smg/cfg/%s.cfg", host_name);
+    system(cmd);
+    sprintf(file_name, "/smg/cfg/%s.cfg", host_name);
+}
+int add_host_to_subnet_file(char *host_ip)
+{
+    char subnet[100], *sptr, cmd[1000], host_name[100];
+	  strcpy(subnet, host_ip);
+	  sptr=strchr(subnet, '\0');
+	  while(*sptr != '.') --sptr;
+          *sptr = '\0';
+          if(nslookup(host_ip,host_name) != NSLOOKUP_SUCCESS) {
+              slog("nslookup failed for hostip >%s<\n", host_ip);
+              return 0;
+          }
+          lower_case_and_warn(host_name, "DNS returns UPPER CASE host names - converting to lower case..\n");
+          sprintf(cmd, "echo %s %s >> /smg/cfg/ping/subnet.%s", host_ip, host_name, subnet);
+          //printf("system(%s)\n", cmd);
+          slog("system >%s<\n", cmd);
+          system(cmd);
+          return 1;
+}
+int add_host_to_host_file(char *host_ip, char *os_type, char *file_modified, 
+       char *domain)
+{
+    char subnet[100], *sptr, cmd[1000], host_name[100];
+          nslookup(host_ip, host_name);
+          lower_case_and_warn(host_name, "DNS returns UPPER CASE host names - converting to lower case..\n");
+          if(strstr(os_type, "sunos")) {
+              sprintf(cmd, "echo %s %s %s >> /smg/cfg/sun.hosts", 
+                  host_name, host_ip, "/smg/cfg/sun.cfg");
+              strcpy(file_modified, "/smg/cfg/sun_mount.cfg");
+              g_setup_ssh=1;
+          } else if(strstr(os_type, "aix")) {
+              sprintf(cmd, "echo %s %s %s >> /smg/cfg/aix.hosts", 
+                   host_name, host_ip, "/smg/cfg/aix.cfg");
+              strcpy(file_modified, "/smg/cfg/aix.hosts");
+              g_setup_ssh=1;
+          } else if(strstr(os_type, "linux")) {
+              sprintf(cmd, "echo %s %s %s >> /smg/cfg/linux.hosts", 
+                   host_name, host_ip, "/smg/cfg/nagadm.cfg");
+              strcpy(file_modified, "/smg/cfg/linux.hosts");
+              g_setup_ssh=1;
+          } else if(strstr(os_type, "indows")) {
+              sprintf(cmd, "echo %s %s %s >> /smg/cfg/windows.hosts", 
+                   host_name, host_ip, domain);
+              strcpy(file_modified, "/smg/cfg/windows.hosts");
+          } else {
+              printf("UNKNOWN os type of >%s<\n", os_type);
+              return 0;
+          }
+          slog("system >%s<\n", cmd);
+          system(cmd);
+          return 1;
+}
+
+
+int its_an_ip(char *host)
+{
+    char *sptr; int i;
+
+    if(strlen(host) > 16) return 0;
+    for (i=0; i<3; i++) {
+       if(sptr=strchr(host, '.')) {
+           if(!isdigit(*(sptr-1)) || !isdigit(*(sptr+1))) return 0;
+       } else return 0;
+    }
+    return 1;
+}
+
+
+int campus_node(char *node_ip) {
+    return !(hospital_node(node_ip));
+}
+int hospital_node(char *node_ip)
+{
+    if(ip_first_octet_is_155_and_second_octet_is_greater_than_100(node_ip) ||
+       ip_first_octet_is_172(node_ip)) return 1;
+    return 0;
+}
+int ip_first_octet_is_155_and_second_octet_is_greater_than_100(char *node_ip)
+{
+    char *ptr, buf[10], *octet;
+
+    if(strncmp(node_ip,"155", 3)) return 0;
+    
+    octet=buf;
+    ptr=node_ip; ptr+=4;
+
+    while(*ptr != '.') *(octet++) = *(ptr++); *octet='\0';
+    if(atoi(buf) >= 100) return 1;
+    
+    return 0;
+} 
+
+int ip_first_octet_is_172(char *node_ip)
+{
+    if(!strncmp(node_ip,"172", 3)) return 1;
+    return 0;
+}
+
+int get_list_from_nmap(char *subnet)
+{
+    char cmd[500], file[500], buf[1000], *sptr, ip[200], ipbuf[200];
+    char tbuf[100], d1[100], d2[100], d3[100], d4[100], sip_up[100]="0";
+    char num_ips[100];
+    char host_or_ip[100], possible_prend_ip[100];
+    int num_good=0;
+    FILE *fpr, *fpw;
+
+    sprintf(cmd,"nmap -sP %s", subnet);
+    if(!(fpr=popen(cmd,"r") ))  {
+        slog("Cannot popen cmd >%s<\n", cmd);
+        return 0;
+    }
+#ifdef NEEDED
+    sprintf(file,"/tmp/%s.nmap", subnet_no_bitmask);
+    if(!(fpw=fopen(file,"w") ))  {
+        slog("Cannot popen cmd >%s<\n", file);
+        return 0;
+    }
+#endif
+    while(fgets(buf, 999, fpr)) {
+
+#ifdef DEBUG 
+slog("%s",buf);
+#endif
+        int num; char name[100], clean_ip[100];
+#ifdef NEEDED 
+        fprintf(fpw,"%s",buf);
+#endif
+        if(sptr = strstr(buf,"Nmap scan report for ")) { //runnin on Ubuntu
+            sptr += strlen("Nmap scan report for ");
+            num = sscanf(sptr, "%s %s", name, ip);
+            if(num == 1) {
+                strcpy(ip, name);
+                strcpy(name, "noname");
+            }
+            remove_prens(ip, clean_ip);
+            strcpy(ip_list[num_good++], clean_ip);
+#ifdef dump_some_nmap_output
+Host u3d.umail.utah.edu (155.97.181.86) is up (0.00047s latency).
+Host u4d.umail.utah.edu (155.97.181.87) is up (0.0014s latency).
+Host 155.97.181.88 is up (0.00042s latency).
+Host 155.97.181.89 is up (0.0034s latency).
+Host 155.97.181.91 is up (0.00046s latency).
+Host v-97.umail.utah.edu (155.97.181.97) is up (0.00058s latency).
+Host v-98.umail.utah.edu (155.97.181.98) is up (0.00046s latency).
+#endif
+        } else if(!strncmp(buf,"Host ", 5) ) {
+            if(!strncmp(buf,"Host is", 8))
+                sscanf(buf,"%s %s %s", d1, d2, host_or_ip, possible_prend_ip);
+            else sscanf(buf,"%s %s %s", d1, host_or_ip, possible_prend_ip);
+            if(its_an_ip(host_or_ip)) {
+                strcpy(not_in_dns[notindns++], host_or_ip);
+                slog("not in dns >%s<\n", host_or_ip);
+                strcpy(ip_list[num_good++], host_or_ip);
+            } else {
+                remove_prens(possible_prend_ip, clean_ip);
+                strcpy(ip_list[num_good++], clean_ip);
+            }
+        }
+//Nmap finished: 256 IP addresses (13 hosts up) scanned in 4.869 seconds
+// Nmap done: 16 IP addresses (4 hosts up) scanned in 1.31 seconds
+        if(strstr(buf,"Nmap finished: ") || strstr(buf,"Nmap done: "))
+        {
+            sscanf(buf, "%s %s %s %s %s %s", d1, d2, num_ips, d3, d4, tbuf);
+            strcpy(sip_up, &tbuf[1]);
+        }
+    }
+    pclose(fpr);
+    if(atoi(sip_up) != num_good) {
+        slog("ERROR: numgot11(%d) != sip_up(%d)\n", num_good, atoi(sip_up));
+    }
+    return num_good;
+}
+
+int remove_prens(char *dirty, char *clean)
+{
+    char buf[100], *sptr;
+    if(*dirty == '(') {
+        strcpy(buf,&dirty[1]);
+        if(sptr = strchr(buf,')')) *sptr='\0';
+        strcpy(clean, buf);
+    } else strcpy(clean, dirty);
+}
+
+get_space_buf(char *info_buf, char *space_buf)
+{
+    int the_len, i=0;
+    the_len = (80 - strlen(info_buf)) / 2;
+    strncpy(space_buf, "                                           ", the_len);
+    space_buf[the_len] = '\0';
+}
+
+get_strs(int argc, char **argv, char domains[][100], char comm_strs[][100],
+    int *num_dom, int *num_snmp_strs)
+{
+    int i, num_domains=0, num_snmp=0;
+    i = 2;
+slog("in get_strs...\n");
+    while(i < argc) {
+        slog("check argv[%d] >%s<\n", i, argv[i]);
+        if(strstr(argv[i],"-domain") ) {
+            i++;
+            for(; i< argc; i++) {
+                if(strstr(argv[i],"-snmp") ) break;
+                strcpy(domains[num_domains++], argv[i]); 
+            }
+        }
+        if(strstr(argv[i],"-snmp") ) {
+            i++;
+            for(; i< argc; i++) {
+                if(strstr(argv[i],"-domain") ) break;
+                strcpy(domains[num_snmp++], argv[i]); 
+            }
+        }
+    }
+    *num_dom = num_domains;
+    *num_snmp_strs = num_snmp;
+slog("LEAVING get_strs...\n");
+}
+
