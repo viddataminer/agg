@@ -14,7 +14,6 @@
 #define TOUT_PATH "/opt/titan/out/trending"
 #define TRENDING_PATH "/opt/titan/out/trending"
 #define NAGIOS_LIBEXEC "/usr/local/nagios/libexec"
-#define DEFAULT_APPINFO_TEMPLATE "passive_smg_template"
-#
+#define DEFAULT_APPINFO_TEMPLATE "passive_titan_template"
 #define NAG_BIN_PATH "/usr/local/nagios/libexec"
 #define NAGIOS_PIPE "/usr/local/nagios/var/rw/nagios.cmd"
